@@ -1,5 +1,6 @@
 use std::fs;
 use std::io;
+use std::env;
 use std::error::Error;
 use std::str::FromStr;
 use std::os::unix::fs::symlink;
@@ -43,23 +44,27 @@ impl Address {
 
 
 pub struct Project {
-    origin: Address,
+    nous_file: File,
     resources: Vec<Box<dyn Fetchable>>,
     name: String,
 }
 
 
+/// for now, the format for .nous files will be a simple .json list
+/// [{name: 'name', kind: 'kind', origin: 'origin'}]
+///
+/// in the future, this will get /much/ more complicated, and will be the
+/// epicenter of essential complexity in the application.
 impl Project {
-    // for now, the format for .nous files will be a simple .json list
-    // [{name: 'name', kind: 'kind', origin: 'origin'}]
-    //
-    // in the future, this will get /much/ more complicated, and will be the
-    // epicenter of essential complexity in the application.
-    pub fn new(origin: Address) -> Self {
+    pub fn new(name: String, origin: Address) -> Self {
         Project {
-            origin,
+            nous_file: File{origin: origin,
+                            // TODO unwrap
+                            dest_dir: env::current_dir().unwrap(),
+                            name: name.clone() + ".nous",
+            },
             resources: vec![],
-            name: String::new(),
+            name: name,
         }
     }
 
@@ -77,7 +82,7 @@ impl Fetchable for Project {
     /// Retrieve the .nous file and all contained resources
     fn fetch(&self) -> Result<(), Box<dyn Error>> {
         // First, retrieve the .nous file to a temp file.
-
+        self.nous_file.fetch();
         // Read the .nous file, populate resources.
 
         // Make local directory, move .nous into it and cwd.

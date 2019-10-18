@@ -1,0 +1,15 @@
+name: nous
+version: "0.0.1"
+author: mcncm
+about: An experiment in doing nothing
+args:
+subcommands:
+  - init:
+      about: Creates a new nousfile
+  - add:
+      about: Adds an object to the nousfile
+      args:
+          - type:
+              short: t
+              possible_values: [ file, git ]
+              takes_value: true
