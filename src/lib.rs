@@ -1,3 +1,6 @@
+#[macro_use]
+extern crate erased_serde;
+
 use std::fs;
 use std::io;
 use std::env;
@@ -5,6 +8,10 @@ use std::error::Error;
 use std::str::FromStr;
 use std::os::unix::fs::symlink;
 use std::path::{Path, PathBuf};
+
+use serde::{Deserialize, Deserializer, Serialize};
+use serde_json;
+use serde_traitobject;
 // use std::hash::{Hash, Hasher};
 
 use url::Url;
@@ -12,21 +19,36 @@ use git2::Repository;
 use reqwest;  // TODO: why is this import unused? Code seems to work without import.
 
 
-pub trait Fetchable {
+pub trait Fetchable: erased_serde::Serialize {
     fn fetch(&self) -> Result<(), Box<dyn Error>>;
 }
+serialize_trait_object!(Fetchable);
 
+impl<'de> Deserialize<'de> for Box<dyn Fetchable> {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        /* dummy implementation */
+        Ok(Box::new(File {
+            origin: Address::new(String::new()),
+            dest_dir: PathBuf::new(),
+            name: String::new(),
+        }))
+    }
+}
 
 pub struct Config {
     symlink_local_resources: bool,
 }
 
 
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub enum Address {
     Local(PathBuf),
     RemoteHttp(Url),
 }
+
 
 impl Address {
     pub fn new(uri: String) -> Self {
@@ -43,6 +65,7 @@ impl Address {
 }
 
 
+#[derive(Serialize, Deserialize)]
 pub struct Project {
     nous_file: File,
     resources: Vec<Box<dyn Fetchable>>,
@@ -72,8 +95,16 @@ impl Project {
         self.resources.push(Box::new(res));
     }
 
-    pub fn write_file(&self) {
-        // Write out a .nous file
+    // Instantiates a Project struct from the path of a nousfile
+    /*
+    pub fn from_nous_path(path: PathBuf) -> Self {
+        // TODO
+    }
+    */
+
+    /// Write out a .nous file
+    fn write_file(&self, path: PathBuf) {
+        // TODO
     }
 }
 
@@ -94,7 +125,7 @@ impl Fetchable for Project {
 }
 
 
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct GitRepository {
     pub origin: Address,
     pub dest_dir: PathBuf,
@@ -121,7 +152,7 @@ impl Fetchable for GitRepository {
 }
 
 
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct File {
     pub origin: Address,
     pub dest_dir: PathBuf,
@@ -149,3 +180,35 @@ impl Fetchable for File {
         Ok(())
     }
 }
+
+
+/*
+/// From a uri and resource kind hint, attempt to create a Fetchable struct.
+fn infer_resource(uri: String, maybe_kind: Option(String))
+                      -> Option(Box<dyn Fetchable>) {
+
+    // Open the project at dest_dir
+    let addr = Address::new(uri);
+    // Have to make best guess what kind of resource this is.
+    match addr {
+        Address::Local(path) => {
+            // check if file, check if git repo
+            let md = fs::metadata(&path);
+            if md.is_file() {
+
+            }
+        },
+        Address::RemoteHttp(path) => {
+            if let Some(kind) = maybe_kind {
+                match kind {
+                    unimplemented!();
+                }
+            } else {
+                eprintln!("Please specify a resource type for a remote resource.");
+            }
+        },
+    }
+
+    Ok(())
+}
+*/

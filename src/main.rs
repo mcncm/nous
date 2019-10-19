@@ -16,6 +16,8 @@ fn main() -> io::Result<()> {
         Some("init") => {},
         Some("add") => {},
         _ => {eprintln!("no subcommand!");},
-    }
+    };
+
+    Ok(())
 
 }
