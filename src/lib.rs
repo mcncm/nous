@@ -7,11 +7,10 @@ use std::env;
 use std::error::Error;
 use std::str::FromStr;
 use std::os::unix::fs::symlink;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use serde::{Deserialize, Deserializer, Serialize};
-use serde_json;
-use serde_traitobject;
+
 // use std::hash::{Hash, Hasher};
 
 use url::Url;
@@ -81,13 +80,13 @@ pub struct Project {
 impl Project {
     pub fn new(name: String, origin: Address) -> Self {
         Project {
-            nous_file: File{origin: origin,
-                            // TODO unwrap
+            nous_file: File{origin,
+                            // TODO unwrap; env shouldn't be in here
                             dest_dir: env::current_dir().unwrap(),
                             name: name.clone() + ".nous",
             },
             resources: vec![],
-            name: name,
+            name,
         }
     }
 
@@ -181,6 +180,19 @@ impl Fetchable for File {
     }
 }
 
+/// Initializes a nous repository in the current directory.
+pub fn nous_init(dir: PathBuf) -> io::Result<()> {
+    let md = fs::metadata(&dir)?;
+    if md.is_dir() {
+        let mut nous_path = dir.clone();
+        nous_path.push(".nous");
+        fs::File::create(nous_path)?;
+        Ok(())
+    } else {
+        Err(io::Error::new(io::ErrorKind::InvalidInput,
+        format!("{} is not a directory", dir.to_str().unwrap())))
+    }
+}
 
 /*
 /// From a uri and resource kind hint, attempt to create a Fetchable struct.
