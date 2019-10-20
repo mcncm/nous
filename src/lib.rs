@@ -49,7 +49,7 @@ pub enum Address {
 
 
 impl Address {
-    pub fn new(uri: String) -> Self {
+    pub fn from_string(uri: String) -> Self {
         // Figure out if local or remote as stupidly as possible
         let uri_wrap = Url::from_str(&uri);
         match uri_wrap {
@@ -89,21 +89,25 @@ impl Project {
         }
     }
 
-    pub fn push<T: 'static + Fetchable>(&mut self, res: T) {
-        self.resources.push(Box::new(res));
+    pub fn push(&mut self, res: Box<dyn Fetchable>) {
+        self.resources.push(res);
     }
 
-    /// Instantiates a Project struct from a path: if this is a path to a
-    /// nousfile, simply instantiate that project. If it's enclosed in a nous
-    /// project, return that project.
-    /*
-    pub fn from_path(path: PathBuf) -> Self {
-        // TODO
+    /// Read a project from a .nous file
+    fn from_file(path: &PathBuf) -> Option<Self> {
+        if let Ok(j) = fs::read(&path.as_path()) {
+            if let Ok(proj) = serde_json::from_slice(&j[..]) {
+                Some(proj)
+            } else {
+                None
+            }
+        } else {
+            None
+        }
     }
-    */
 
     /// Write out a .nous file
-    fn write_to_file(&self, path: PathBuf) -> io::Result<()> {
+    fn write_to_file(&self, path: &PathBuf) -> io::Result<()> {
         dbg!("Writing to file!");
         println!("Path is {:?}", path);
         let j = serde_json::to_string(&self)?;
@@ -231,6 +235,17 @@ fn enclosing_nous_repo(path: &PathBuf) -> Option<PathBuf> {
 }
 
 
+/// finds and returns the proximal nous repo containing and including this path,
+/// if one exists.
+fn enclosing_nous_repo_incl(path: &PathBuf) -> Option<PathBuf> {
+    if is_nous_repo(&path) {
+        Some(path.to_owned())
+    } else {
+        enclosing_nous_repo(path)
+    }
+}
+
+
 /// Checks if this path points to a nous repo diretory, returning `true` if it
 /// is, and `false` otherwise.
 fn is_nous_repo(dir: &PathBuf) -> bool {
@@ -283,7 +298,7 @@ pub fn nous_init(dir: PathBuf) -> io::Result<()> {
         let nous_path = nous_file_path(&dir);
         // TODO this is pretty ugly, right?
         let proj = Project::new(dir.file_name().unwrap().to_str().unwrap().to_owned());
-        proj.write_to_file(nous_path);
+        proj.write_to_file(&nous_path);
         Ok(())
     } else {
         Err(io::Error::new(io::ErrorKind::InvalidInput,
@@ -291,47 +306,84 @@ pub fn nous_init(dir: PathBuf) -> io::Result<()> {
     }
 }
 
+
+/// Adds a resource inferred from a uri name
+pub fn nous_add(uri: String) -> io::Result<()> {
+    if let Some(res) = infer_resource(uri) {
+        nous_add_resource(res)?;
+        Ok(())
+    } else {
+        Err(io::Error::new(io::ErrorKind::InvalidInput,
+            "I don't understand the meaning of that resource!"))
+    }
+}
+
+
 /// Adds a resource to the enclosing repository, if one exists.
-pub fn nous_add(res: PathBuf, resource: Box<dyn Fetchable>) -> io::Result<()> {
+fn nous_add_resource(resource: Box<dyn Fetchable>) -> io::Result<()> {
     // For now, just put it into the currrently enclosing dir--
     // This is subject to change, of course. This function should probably take
     // a dir parameter.
-    if let Some(dir) = enclosing_nous_repo(&env::current_dir()?) {
-        match validate_nous_repo(&dir) {
+    if let Some(repo) = enclosing_nous_repo_incl(&env::current_dir()?) {
+        match validate_nous_repo(&repo) {
             Ok(()) => {
+                let nous_file = nous_file_path(&repo);
                 // Deserialize the project
-                let nous_path = nous_file_path(&dir);
-                // let proj = Project::from_path(dir);
-                // Add a new resource to it
-
+                let mut proj = Project::from_file(&nous_file).unwrap();
+                // TODO Add a new resource to it
+                proj.push(resource);
                 // Reserialize
-                Ok(())
+                proj.write_to_file(&nous_file)
             },
             e => e,
         }
     } else {
         Err(io::Error::new(io::ErrorKind::InvalidInput,
-            format!("{} is not contained in a nous repo", res.to_str().unwrap())))
+            format!("working directory not contained in a nous repo")))
     }
 }
 
-/*
+
 /// From a uri and resource kind hint, attempt to create a Fetchable struct.
-fn infer_resource(uri: String, maybe_kind: Option(String))
-                      -> Option(Box<dyn Fetchable>) {
+fn infer_resource(uri: String) -> Option<Box<dyn Fetchable>> {
 
     // Open the project at dest_dir
-    let addr = Address::new(uri);
+    let addr = Address::from_string(uri);
     // Have to make best guess what kind of resource this is.
-    match addr {
+    match &addr {
         Address::Local(path) => {
             // check if file, check if git repo
-            let md = fs::metadata(&path);
-            if md.is_file() {
-
+            if let Ok(md) = fs::metadata(&path) {
+                if md.is_file() {
+                    Some(Box::new(File {
+                        origin: Some(addr.clone()),
+                        dest_dir: PathBuf::from_str(
+                            path.file_stem().unwrap().to_str().unwrap()
+                        ).unwrap(),
+                        name: path.file_name().unwrap().to_str().unwrap().to_owned(),
+                    }))
+                    // TODO is there a better/faster way to do this with git2, or roll my own?
+                } else {
+                    if let Ok(_) = git2::Repository::open(&path) {
+                        Some(Box::new(GitRepository {
+                            origin: Some(addr.clone()),
+                            dest_dir: PathBuf::from_str(
+                                path.file_stem().unwrap().to_str().unwrap()
+                            ).unwrap(),
+                            name: path.file_name().unwrap().to_str().unwrap().to_owned(),
+                        }))
+                    } else {
+                        None
+                    }
+                }
+            } else {
+                None
             }
         },
+
         Address::RemoteHttp(path) => {
+            unimplemented!();
+            /*
             if let Some(kind) = maybe_kind {
                 match kind {
                     unimplemented!();
@@ -339,9 +391,7 @@ fn infer_resource(uri: String, maybe_kind: Option(String))
             } else {
                 eprintln!("Please specify a resource type for a remote resource.");
             }
+            */
         },
     }
-
-    Ok(())
 }
-*/
