@@ -13,10 +13,13 @@ fn main() -> io::Result<()> {
     let matches = App::from_yaml(yaml).get_matches();
 
     match matches.subcommand_name() {
-        Some("init") => {nous::nous_init(env::current_dir()?);},
-        Some("add") => {},
+        Some("init") => {nous::nous_init(env::current_dir()?)
+                         .unwrap_or_else(|e| {println!("{}", e);});
+        },
+        Some("add") => {
+        },
         _ => {eprintln!("no subcommand!");},
-    }
+    };
 
     Ok(())
 
