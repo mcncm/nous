@@ -7,11 +7,11 @@ use std::os::unix::fs::symlink;
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
-//use std::hash::{Hash, Hasher};
-
+use sha2::{Sha256, Digest};
+// use crypto::digest::Digest;
 use url::Url;
 use git2::Repository;
-use reqwest;  // TODO: why is this import unused? Code seems to work without import.
+use reqwest;
 
 
 #[typetag::serde]
@@ -20,9 +20,11 @@ pub trait Fetchable {
 }
 
 
+/* 
 pub struct Config {
     symlink_local_resources: bool,
 }
+*/
 
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -48,7 +50,7 @@ impl Address {
 
 #[derive(Serialize, Deserialize)]
 pub struct Project {
-    nous_file: File,
+    nous_file: NousFile,
     resources: Vec<Box<dyn Fetchable>>,
     name: String,
 }
@@ -62,10 +64,11 @@ pub struct Project {
 impl Project {
     pub fn new(name: String) -> Self {
         Project {
-            nous_file: File{origin: None,
-                            // TODO unwrap; env shouldn't be in here
-                            dest_dir: env::current_dir().unwrap(),
-                            name: name.clone() + ".nous",
+            nous_file: NousFile{
+                origin: None,
+                // TODO unwrap; env shouldn't be in here
+                dest_dir: env::current_dir().unwrap(),
+                name: name.clone() + ".nous",
             },
             resources: vec![],
             name,
@@ -152,10 +155,48 @@ impl Fetchable for GitRepository {
 
 
 #[derive(Clone, Serialize, Deserialize)]
+pub struct NousFile {
+    pub origin: Option<Address>,
+    pub dest_dir: PathBuf,
+    pub name: String,
+}
+
+
+// MAJOR TODO: should be able to derive this
+
+#[typetag::serde]
+impl Fetchable for NousFile {
+    fn fetch(&self) -> Result<(), Box<dyn Error>> {
+        // TODO check for overwrite
+        let dest_path = &self.dest_dir.as_path().join(&self.name);
+        match &self.origin {
+            Some(Address::Local(path)) => {
+                symlink(path, dest_path)?;
+            },
+            Some(Address::RemoteHttp(url)) => {
+                dbg!("Attempting to download file");
+                // TODO error conversion
+                let mut response = reqwest::get(url.as_str()).unwrap();
+                // TODO handle(/convert?) a reqwest error
+                let mut dest = fs::File::create(dest_path).unwrap();
+                io::copy(&mut response, &mut dest)?;
+            },
+            None => {
+                unimplemented!();
+            }
+        };
+
+        Ok(())
+    }
+}
+
+
+#[derive(Clone, Serialize, Deserialize)]
 pub struct File {
     pub origin: Option<Address>,
     pub dest_dir: PathBuf,
     pub name: String,
+    pub hash: Vec<u8>,
 }
 
 #[typetag::serde]
@@ -353,7 +394,9 @@ fn infer_resource(uri: String) -> Option<Box<dyn Fetchable>> {
                             path.file_stem().unwrap().to_str().unwrap()
                         ).unwrap(),
                         name: path.file_name().unwrap().to_str().unwrap().to_owned(),
+                        hash: hash_file(&path),
                     }))
+
                 // TODO is there a better/faster way to do this with git2, or roll my own?
                 } else if git2::Repository::open(&path).is_ok() {
                     Some(Box::new(GitRepository {
@@ -371,9 +414,10 @@ fn infer_resource(uri: String) -> Option<Box<dyn Fetchable>> {
             }
         },
 
+        _ => { unimplemented!(); },
+        /*
         Address::RemoteHttp(path) => {
             unimplemented!();
-            /*
             if let Some(kind) = maybe_kind {
                 match kind {
                     unimplemented!();
@@ -381,9 +425,20 @@ fn infer_resource(uri: String) -> Option<Box<dyn Fetchable>> {
             } else {
                 eprintln!("Please specify a resource type for a remote resource.");
             }
-            */
         },
+        */
     }
+}
+
+/// Calculate a checksum for a single file. Has to return a byte vector,
+/// rathter than a byte array, so size is known at compile time.
+fn hash_file(path: &PathBuf) -> Vec<u8> {
+    let mut file = fs::File::open(path).unwrap();
+    let mut hasher = Sha256::new();
+    io::copy(&mut file, &mut hasher).unwrap();
+    let hash = hasher.result().iter().map(|u| u.to_owned()).collect();
+    println!("hashed file contents are: {:?}", hash);
+    hash
 }
 
 
@@ -421,7 +476,7 @@ mod tests{
             .expect("Failed to add file");
 
         // Read the .nous file.
-        let mut json_1 = Vec::new();
+        let mut json_1 = vec![];
         if let Ok(j) = fs::read(&nous_path.as_path()) {
             json_1 = j;
         }
@@ -429,10 +484,10 @@ mod tests{
         // Load it to a project and write it back. This
         dbg!(&nous_path);
         let proj = Project::from_file(&nous_path).expect("Failed to load proj");
-        proj.write_to_file(&nous_path);
+        proj.write_to_file(&nous_path).expect("Failed to write to .nous");
 
         // Reread the .nous file.
-        let mut json_2 = Vec::new();
+        let mut json_2 = vec![];
         if let Ok(j) = fs::read(&nous_path.as_path()) {
             json_2 = j;
         }
@@ -442,6 +497,6 @@ mod tests{
 
         // Clean up.
         env::set_current_dir(&old_dir).unwrap();
-        fs::remove_dir_all(&test_dir);
+        // fs::remove_dir_all(&test_dir);
     }
 }
