@@ -1,6 +1,3 @@
-#[macro_use]
-extern crate erased_serde;
-
 use std::fs;
 use std::io;
 use std::env;
@@ -9,7 +6,7 @@ use std::str::FromStr;
 use std::os::unix::fs::symlink;
 use std::path::PathBuf;
 
-use serde::{Deserialize, Deserializer, Serialize};
+use serde::{Deserialize, Serialize};
 //use std::hash::{Hash, Hasher};
 
 use url::Url;
@@ -17,24 +14,11 @@ use git2::Repository;
 use reqwest;  // TODO: why is this import unused? Code seems to work without import.
 
 
-pub trait Fetchable: erased_serde::Serialize {
+#[typetag::serde]
+pub trait Fetchable {
     fn fetch(&self) -> Result<(), Box<dyn Error>>;
 }
-serialize_trait_object!(Fetchable);
 
-impl<'de> Deserialize<'de> for Box<dyn Fetchable> {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        /* dummy implementation */
-        Ok(Box::new(File {
-            origin: None,
-            dest_dir: PathBuf::new(),
-            name: String::new(),
-        }))
-    }
-}
 
 pub struct Config {
     symlink_local_resources: bool,
@@ -61,7 +45,6 @@ impl Address {
         }
     }
 }
-
 
 #[derive(Serialize, Deserialize)]
 pub struct Project {
@@ -96,7 +79,9 @@ impl Project {
     /// Read a project from a .nous file
     fn from_file(path: &PathBuf) -> Option<Self> {
         if let Ok(j) = fs::read(&path.as_path()) {
+            println!("Successfully loaded json");
             if let Ok(proj) = serde_json::from_slice(&j[..]) {
+                println!("Successfully deserialized json");
                 Some(proj)
             } else {
                 None
@@ -117,19 +102,20 @@ impl Project {
     }
 }
 
-
+#[typetag::serde]
 impl Fetchable for Project {
     /// Retrieve the .nous file and all contained resources
     fn fetch(&self) -> Result<(), Box<dyn Error>> {
         // First, retrieve the .nous file to a temp file.
-        self.nous_file.fetch();
+        //self.nous_file.fetch();
         // Read the .nous file, populate resources.
 
         // Make local directory, move .nous into it and cwd.
 
         // Fetch resources.
 
-        Ok(())
+        unimplemented!();
+        //Ok(())
     }
 }
 
@@ -141,6 +127,7 @@ pub struct GitRepository {
     pub name: String,
 }
 
+#[typetag::serde]
 impl Fetchable for GitRepository {
     fn fetch(&self) -> Result<(), Box<dyn Error>> {
         // TODO check for overwrite
@@ -171,6 +158,7 @@ pub struct File {
     pub name: String,
 }
 
+#[typetag::serde]
 impl Fetchable for File {
     fn fetch(&self) -> Result<(), Box<dyn Error>> {
         // TODO check for overwrite
@@ -241,6 +229,7 @@ fn enclosing_nous_repo_incl(path: &PathBuf) -> Option<PathBuf> {
     if is_nous_repo(&path) {
         Some(path.to_owned())
     } else {
+        println!("I made it here with path {:?}", &path);
         enclosing_nous_repo(path)
     }
 }
@@ -282,13 +271,15 @@ fn is_nous_file(file: &PathBuf) -> bool {
 
 /// Returns the path of a nous file contained in the given dir
 fn nous_file_path(dir: &PathBuf) -> PathBuf {
+    // TODO doesn't validate that this file exists
     let mut nous_path = dir.clone();
     nous_path.push(".nous");
     nous_path
 }
 
+
 /// Initializes a nous repository in the specified directory.
-pub fn nous_init(dir: PathBuf) -> io::Result<()> {
+pub fn nous_init(dir: &PathBuf) -> io::Result<()> {
     if is_nous_repo(&dir) {
         return Err(io::Error::new(io::ErrorKind::InvalidInput,
                    format!("{} is already a nous repo", dir.to_str().unwrap())))
@@ -298,7 +289,7 @@ pub fn nous_init(dir: PathBuf) -> io::Result<()> {
         let nous_path = nous_file_path(&dir);
         // TODO this is pretty ugly, right?
         let proj = Project::new(dir.file_name().unwrap().to_str().unwrap().to_owned());
-        proj.write_to_file(&nous_path);
+        proj.write_to_file(&nous_path)?;
         Ok(())
     } else {
         Err(io::Error::new(io::ErrorKind::InvalidInput,
@@ -329,6 +320,7 @@ fn nous_add_resource(resource: Box<dyn Fetchable>) -> io::Result<()> {
             Ok(()) => {
                 let nous_file = nous_file_path(&repo);
                 // Deserialize the project
+                dbg!(&repo, &nous_file);
                 let mut proj = Project::from_file(&nous_file).unwrap();
                 // TODO Add a new resource to it
                 proj.push(resource);
@@ -339,7 +331,7 @@ fn nous_add_resource(resource: Box<dyn Fetchable>) -> io::Result<()> {
         }
     } else {
         Err(io::Error::new(io::ErrorKind::InvalidInput,
-            format!("working directory not contained in a nous repo")))
+            "working directory not contained in a nous repo"))
     }
 }
 
@@ -362,19 +354,17 @@ fn infer_resource(uri: String) -> Option<Box<dyn Fetchable>> {
                         ).unwrap(),
                         name: path.file_name().unwrap().to_str().unwrap().to_owned(),
                     }))
-                    // TODO is there a better/faster way to do this with git2, or roll my own?
+                // TODO is there a better/faster way to do this with git2, or roll my own?
+                } else if git2::Repository::open(&path).is_ok() {
+                    Some(Box::new(GitRepository {
+                        origin: Some(addr.clone()),
+                        dest_dir: PathBuf::from_str(
+                            path.file_stem().unwrap().to_str().unwrap()
+                        ).unwrap(),
+                        name: path.file_name().unwrap().to_str().unwrap().to_owned(),
+                    }))
                 } else {
-                    if let Ok(_) = git2::Repository::open(&path) {
-                        Some(Box::new(GitRepository {
-                            origin: Some(addr.clone()),
-                            dest_dir: PathBuf::from_str(
-                                path.file_stem().unwrap().to_str().unwrap()
-                            ).unwrap(),
-                            name: path.file_name().unwrap().to_str().unwrap().to_owned(),
-                        }))
-                    } else {
-                        None
-                    }
+                    None
                 }
             } else {
                 None
@@ -393,5 +383,65 @@ fn infer_resource(uri: String) -> Option<Box<dyn Fetchable>> {
             }
             */
         },
+    }
+}
+
+
+#[cfg(test)]
+mod tests{
+    use super::*;
+
+    // Common variables that appear in all of the tests
+    #[macro_export]
+    macro_rules! setup_test_structs {
+        // TODO: be more careful, e.g. to use a tempdir with a guaranteed-
+        // unique name
+        ($var1:ident, $var2:ident, $var3:ident, $var4:ident) => {
+            let mut $var1 = env::current_dir().unwrap(); // old dir
+            let mut $var2 = env::current_dir().unwrap().join("test_dir"); // dir
+            let $var3 = nous_file_path(&$var2); // nous file
+            let mut $var4 = $var2.clone().join("file.txt"); // test file
+        };
+    }
+
+    // Make a test directory and create a repository in it.
+    #[test]
+    fn test_repo_roundtrip() {
+        setup_test_structs!(old_dir, test_dir, nous_path, file_path);
+        // Clean up
+        fs::remove_dir_all(&test_dir).unwrap_or_else(drop);
+        // Make a new one
+        fs::create_dir(&test_dir).expect("Failed to create test directory.");
+        nous_init(&test_dir);
+
+        // Add a file to it.
+        fs::File::create(&file_path).expect("Failed to create test file");
+        env::set_current_dir(&test_dir).expect("Failed to change to test directory");
+        nous_add(file_path.as_path().to_str().unwrap().to_owned())
+            .expect("Failed to add file");
+
+        // Read the .nous file.
+        let mut json_1 = Vec::new();
+        if let Ok(j) = fs::read(&nous_path.as_path()) {
+            json_1 = j;
+        }
+
+        // Load it to a project and write it back. This
+        dbg!(&nous_path);
+        let proj = Project::from_file(&nous_path).expect("Failed to load proj");
+        proj.write_to_file(&nous_path);
+
+        // Reread the .nous file.
+        let mut json_2 = Vec::new();
+        if let Ok(j) = fs::read(&nous_path.as_path()) {
+            json_2 = j;
+        }
+
+        // Look for a discrepancy
+        assert_eq!(json_1, json_2);
+
+        // Clean up.
+        env::set_current_dir(&old_dir).unwrap();
+        fs::remove_dir_all(&test_dir);
     }
 }

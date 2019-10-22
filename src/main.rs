@@ -4,7 +4,6 @@ extern crate clap;
 
 use std::io;
 use std::env;
-use std::path::PathBuf;
 use clap::App;
 
 fn main() -> io::Result<()> {
@@ -13,7 +12,7 @@ fn main() -> io::Result<()> {
 
     match matches.subcommand_name() {
         Some("init") => {
-            nous::nous_init(env::current_dir()?)
+            nous::nous_init(&env::current_dir()?)
                   .unwrap_or_else(|e| {println!("{}", e);});
         },
         Some("add") => {
